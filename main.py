@@ -1,16 +1,19 @@
-import jwt
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.hash import bcrypt
 from tortoise import fields
 from tortoise.contrib.fastapi import register_tortoise
 from tortoise.contrib.pydantic import pydantic_model_creator
 from tortoise.models import Model
-
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
-JWT_SECRET_KEY = "A@mir72597jwt"
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 class User(Model):
     id = fields.IntField(pk=True)
@@ -23,8 +26,6 @@ class User(Model):
 User_Pydantic = pydantic_model_creator(User, name='User')
 UserIn_Pydantic = pydantic_model_creator(User, name='UserIn', exclude_readonly=True)
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 async def authenticate_user(username: str, password: str):
     user = await User.get(username=username)
     if not user:
@@ -33,44 +34,22 @@ async def authenticate_user(username: str, password: str):
         return False
     return user
 
-@app.post('/token')
-async def token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = await authenticate_user(form_data.username, form_data.password)
-
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid username or password')
-
-    user_obj = await User_Pydantic.from_tortoise_orm(user)
-    token = jwt.encode(user_obj.dict(), JWT_SECRET_KEY)
-
-    return {'access_token': token , 'token_type': 'bearer'}
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    try:
-        payload =jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
-        user = await User.get(id=payload.get('id'))
-    except:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail='Invalid username or password'
-            )
-    return await User_Pydantic.from_tortoise_orm(user)
-
-
-@app.post('/users', response_model=User_Pydantic)
-async def create_user(user: UserIn_Pydantic):
-    user_obj = User(username=user.username, password_hash=bcrypt.hash(user.password_hash))
-    await user_obj.save()
-    return await User_Pydantic.from_tortoise_orm(user_obj)
-
-@app.get('/user/me', response_model=User_Pydantic)
-async def get_user(user: User_Pydantic = Depends(get_current_user)):
-    return user
-
-
 register_tortoise(
     app,
     db_url = 'sqlite://db.sqlite3',
     modules = {'models': ['main']},
     generate_schemas=True,
     add_exception_handlers = True)
+
+@app.get('/', response_class=HTMLResponse)
+async def file_temp(request: Request):
+  return templates.TemplateResponse("login_page.html", {'request': request})
+
+@app.post('/user')
+async def user(username: str = Form(...), password: str = Form(...)):
+    user = await authenticate_user(username, password)
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid username or password')
+
+    return {'username': username}
